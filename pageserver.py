@@ -4,19 +4,15 @@
   Based largely on https://docs.python.org/3.4/howto/sockets.html
   This trivial implementation is not robust:  We have omitted decent
   error handling and many other things to keep the illustration as simple
-  as possible. 
-
-  FIXME:
-  Currently this program always serves an ascii graphic of a cat.
-  Change it to serve files if they end with .html or .css, and are
-  located in ./pages  (where '.' is the directory from which this
-  program is run).  
+  as possible.  
 """
 
 import CONFIG    # Configuration options. Create by editing CONFIG.base.py
 import argparse  # Command line options (may override some configuration options)
 import socket    # Basic TCP/IP communication on the internet
-import _thread   # Response computation runs concurrently with main program 
+import _thread   # Response computation runs concurrently with main program
+import os        # For directory path manipulations
+import re        # For checking urls to see if they are unsafe
 
 def listen(portnum):
     """
@@ -51,16 +47,6 @@ def serve(sock, func):
         (clientsocket, address) = sock.accept()
         _thread.start_new_thread(func, (clientsocket,))
 
-
-##
-## Starter version only serves cat pictures. In fact, only a
-## particular cat picture.  This one.
-##
-CAT = """
-     ^ ^
-   =(   )=
-"""
-
 ## HTTP response codes, as the strings we will actually send. 
 ##   See:  https://en.wikipedia.org/wiki/List_of_HTTP_status_codes
 ##   or    http://www.w3.org/Protocols/rfc2616/rfc2616-sec10.html
@@ -78,18 +64,38 @@ def respond(sock):
     sent = 0
     request = sock.recv(1024)  # We accept only short requests
     request = str(request, encoding='utf-8', errors='strict')
-    print("\nRequest was {}\n".format(request))
 
     parts = request.split()
     if len(parts) > 1 and parts[0] == "GET":
-        transmit(STATUS_OK, sock)
-        transmit(CAT, sock)
+        wd = os.path.dirname(os.path.realpath(__file__))
+        td = os.path.join(wd, 'pages', parts[1][1:])
+        response, stat = gen_response(td)
+        transmit(stat, sock)
+        transmit(response, sock)
     else:
         transmit(STATUS_NOT_IMPLEMENTED, sock)        
         transmit("\nI don't handle this request: {}\n".format(request), sock)
 
     sock.close()
     return
+
+def gen_response(td):
+    """
+    This attempts to access the file requested, returning both the file and
+    the OK status if found. If not, it returns an error message and the 404
+    status. If the request was unsafe, it returns a 403 error instead.
+    """
+    if re.match("^((?!\/\/)(?!\.\.)[^~])*.html|((?!\/\/)(?!\.\.)[^~])*.css$", td):
+        try:
+            response = open(td).read()
+            stat = STATUS_OK
+        except Exception as e:
+            response = "\nFile not found at: {}\n".format(td)
+            stat = STATUS_NOT_FOUND
+    else:
+        response = "\nUnsafe request made: {}\n".format(td)
+        stat = STATUS_FORBIDDEN
+    return (response, stat)
 
 def transmit(msg, sock):
     """It might take several sends to get the whole message out"""
@@ -98,7 +104,6 @@ def transmit(msg, sock):
         buff = bytes( msg[sent: ], encoding="utf-8")
         sent += sock.send( buff )
     
-
 ###
 #
 # Run from command line
